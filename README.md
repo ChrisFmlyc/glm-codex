@@ -122,9 +122,48 @@ Two warnings print at startup. Both are harmless:
   Codex policy (`ProgramData/OpenAI/Codex/requirements.toml`). Codex falls back to prompting
   for approval, which is the safe default.
 
-**Run it interactively.** On a machine with the managed approval policy, `codex exec`
-(headless) cannot run shell commands — it has no way to prompt, so tool calls are rejected.
-The interactive launcher prompts you to approve each action and works normally.
+### Too many approval prompts?
+
+Codex asks before running commands. By default the launcher already sets the least-naggy
+combination most policies allow:
+
+```
+approval_policy = on-request      # only prompt for risky / out-of-workspace actions
+sandbox_mode    = workspace-write # edit files and run commands in the workspace freely
+```
+
+For even fewer prompts, add **`--auto-mode`** (aliases `-y`, `--yes`):
+
+```bash
+./scripts/codex-glm.sh --auto-mode
+```
+```powershell
+.\scripts\codex-glm.ps1 --auto-mode
+```
+
+That also lets Codex reach the **network** from inside the workspace without asking. Only
+actions *outside* the workspace still prompt.
+
+**You may not be able to silence it completely.** Managed installs can enforce an outer
+policy (`ProgramData/OpenAI/Codex/requirements.toml` on Windows) that forbids fully-silent
+mode - `--dangerously-bypass-approvals-and-sandbox` and `--full-auto` are blocked there. On
+such a machine `on-request` + `workspace-write` is the floor, and `--auto-mode` takes you
+exactly to it. On an unmanaged machine you can go further by setting `CODEX_APPROVAL` /
+`CODEX_SANDBOX` in `.env`.
+
+Override the defaults per-machine in `.env`:
+
+```ini
+CODEX_APPROVAL=on-request       # or 'untrusted' (more prompts), or 'never' if allowed
+CODEX_SANDBOX=workspace-write    # or 'read-only', or 'danger-full-access' if allowed
+```
+
+### Interactive vs headless
+
+Run Codex **interactively** (the launcher does this). On a machine with a managed approval
+policy, `codex exec` (headless) cannot run shell commands — it has no way to prompt, so tool
+calls are rejected. The interactive launcher prompts you to approve out-of-workspace actions
+and works normally; with `--auto-mode`, workspace and network actions do not prompt at all.
 
 ---
 
@@ -160,9 +199,6 @@ cd glm-claude-code
 This creates a `.venv` and installs LiteLLM. It takes a few minutes — it pulls a large
 dependency tree. The installer **checks the release version first** and refuses to install
 `1.82.7` or `1.82.8`, which were [compromised with credential-stealing malware](https://github.com/BerriAI/litellm/issues).
-
-The installer **checks the LiteLLM release first** and refuses `1.82.7` / `1.82.8`, which
-were compromised with credential-stealing malware.
 
 You already filled in `.env` above. The proxy reads the same file — no extra config. Full
 reference of what it contains:

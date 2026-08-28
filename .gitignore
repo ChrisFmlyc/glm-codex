@@ -1,0 +1,16 @@
+# secrets
+.env
+*.key
+*.pem
+
+# python
+.venv/
+.venv-litellm/
+__pycache__/
+
+# logs
+*.log
+
+# os
+.DS_Store
+Thumbs.db

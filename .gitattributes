@@ -1,0 +1,12 @@
+# Shell scripts MUST be LF or they fail on Linux/macOS with
+#   bad interpreter: No such file or directory
+*.sh        text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+
+# PowerShell is fine either way; CRLF is the Windows norm
+*.ps1       text eol=crlf
+
+# Everything else: normalise in the repo, native on checkout
+*           text=auto
+LICENSE     text eol=lf

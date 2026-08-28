@@ -58,15 +58,38 @@ if (-not $env:GLM_API_KEY)  { throw "GLM_API_KEY missing from env file" }
 $model    = if ($env:GLM_MODEL_NAME) { $env:GLM_MODEL_NAME } else { "glm53-uncensored" }
 $ctx      = if ($env:GLM_MAX_CONTEXT) { $env:GLM_MAX_CONTEXT } else { "1048576" }
 $out      = if ($env:GLM_MAX_OUTPUT)  { $env:GLM_MAX_OUTPUT }  else { "16384" }
-$approval = if ($env:CODEX_APPROVAL) { $env:CODEX_APPROVAL } else { "on-request" }
-$sandbox  = if ($env:CODEX_SANDBOX)  { $env:CODEX_SANDBOX }  else { "workspace-write" }
-# --yolo: no prompts, no sandbox. Codex refuses unless the machine policy
-# allows 'never' and 'danger-full-access'. A malicious file in any repo you
-# open can then run arbitrary commands - do not use with untrusted code.
+# Approval + sandbox. Default is no prompts. Override in .env (CODEX_APPROVAL /
+# CODEX_SANDBOX) or soften per-run with --auto-mode.
+$approval = if ($env:CODEX_APPROVAL) { $env:CODEX_APPROVAL } else { "never" }
+$sandbox  = if ($env:CODEX_SANDBOX)  { $env:CODEX_SANDBOX }  else { "danger-full-access" }
+if ($auto) { $approval = "on-request"; $sandbox = "workspace-write" }
 if ($yolo) { $approval = "never"; $sandbox = "danger-full-access" }
 
 if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
   throw "codex not installed. Install with:  npm install -g @openai/codex"
+}
+
+# Codex reads MANAGED DEFAULTS from a fixed path (~/.codex/managed_config.toml),
+# and they override per-session config and CLI flags. So prompting is controlled
+# here, not in the scoped config below. NOTE: this file is GLOBAL - it affects
+# every Codex session on this machine, not only this launcher.
+$globalHome = Join-Path $env:USERPROFILE ".codex"
+New-Item -ItemType Directory -Force -Path $globalHome | Out-Null
+$mc = Join-Path $globalHome "managed_config.toml"
+if ((Test-Path $mc) -and -not (Test-Path "$mc.bak")) { Copy-Item $mc "$mc.bak" }
+"approval_policy = `"$approval`"`nsandbox_mode    = `"$sandbox`"" | Set-Content $mc -Encoding ascii
+Write-Host "codex prompting: approval=$approval sandbox=$sandbox  (global, in $mc)" -ForegroundColor DarkGray
+
+# The machine fence (requirements.toml) must permit the chosen values or Codex
+# ignores them. Detect and warn - editing it needs admin, so we don't touch it.
+$req = "$env:ProgramData\OpenAI\Codex\requirements.toml"
+if (Test-Path $req) {
+  $line = Get-Content $req | Where-Object { $_ -match "allowed_approval_policies" }
+  if ($line -and $line -notmatch [regex]::Escape("`"$approval`"")) {
+    Write-Host "WARN: $req does not allow approval_policy=`"$approval`"." -ForegroundColor Yellow
+    Write-Host "      Codex will fall back and keep prompting. As admin, add it to" -ForegroundColor Yellow
+    Write-Host "      allowed_approval_policies in that file (needs elevation)." -ForegroundColor Yellow
+  }
 }
 
 $env:CODEX_HOME = "$root\.codex-home"

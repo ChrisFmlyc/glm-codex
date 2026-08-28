@@ -122,54 +122,38 @@ Two warnings print at startup. Both are harmless:
   Codex policy (`ProgramData/OpenAI/Codex/requirements.toml`). Codex falls back to prompting
   for approval, which is the safe default.
 
-### Too many approval prompts?
+### How prompting is controlled
 
-Codex asks before running commands. By default the launcher already sets the least-naggy
-combination most policies allow:
+**By default the Codex launcher runs with no approval prompts** — it just does the work. If
+you want confirmations back, you have three levels:
 
-```
-approval_policy = on-request      # only prompt for risky / out-of-workspace actions
-sandbox_mode    = workspace-write # edit files and run commands in the workspace freely
-```
+| Launch | approval / sandbox | Prompts |
+|---|---|---|
+| `codex-glm` (default) | `never` / `danger-full-access` | none |
+| `codex-glm --auto-mode` | `on-request` / `workspace-write` | only outside the workspace |
+| `CODEX_APPROVAL=untrusted` in `.env` | `untrusted` / `read-only` | before most commands |
 
-For even fewer prompts, add **`--auto-mode`** (aliases `-y`, `--yes`):
+> **No prompts means no safety net.** With `never` + `danger-full-access`, a malicious
+> instruction in any repo, web page, or tool output Codex reads can run commands on your
+> machine with zero confirmation. Only point it at code you trust.
 
-```bash
-./scripts/codex-glm.sh --auto-mode
-```
-```powershell
-.\scripts\codex-glm.ps1 --auto-mode
-```
+**How it actually works (the mechanism that matters):**
 
-That also lets Codex reach the **network** from inside the workspace without asking. Only
-actions *outside* the workspace still prompt.
+Codex reads *managed defaults* from a fixed path — `~/.codex/managed_config.toml` — and those
+**override per-session config and CLI flags**. Setting approval only in the launcher's own
+config, or via a `--yolo`-style flag, does **not** work: the managed default clamps it back.
+So the launcher writes `approval_policy` / `sandbox_mode` into that managed file on every run.
 
-For **zero** prompts, add **`--yolo`** — no approvals, no sandbox
-(`approval_policy = never`, `sandbox_mode = danger-full-access`):
+Two consequences:
 
-```bash
-./scripts/codex-glm.sh --yolo
-```
-```powershell
-.\scripts\codex-glm.ps1 --yolo
-```
-
-> **Only for code you trust.** With no sandbox and no approvals, a malicious instruction in
-> any repo, web page, or tool output Codex reads can run arbitrary commands on your machine
-> with zero confirmation. Never point `--yolo` at an untrusted repository.
-
-**Managed machines may forbid this.** An enforced policy
-(`ProgramData/OpenAI/Codex/requirements.toml` on Windows) can restrict which approval and
-sandbox modes are allowed. If `never` / `danger-full-access` are not in its allow-lists,
-Codex refuses `--yolo` and falls back — then `on-request` + `workspace-write` (`--auto-mode`)
-is your floor. You can also set `CODEX_APPROVAL` / `CODEX_SANDBOX` directly in `.env`.
-
-Override the defaults per-machine in `.env`:
-
-```ini
-CODEX_APPROVAL=on-request       # or 'untrusted' (more prompts), or 'never' if allowed
-CODEX_SANDBOX=workspace-write    # or 'read-only', or 'danger-full-access' if allowed
-```
+1. **It is global.** `managed_config.toml` is not per-project or per-provider — it changes
+   prompting for *every* Codex session on the machine, not just this launcher. The launcher
+   backs up any existing file to `managed_config.toml.bak` the first time.
+2. **A machine fence can still block it.** If `%ProgramData%\OpenAI\Codex\requirements.toml`
+   (Windows) or `/etc/codex/requirements.toml` (Unix) exists and its `allowed_approval_policies`
+   doesn't include your value, Codex ignores the default and keeps prompting. The launcher
+   detects this and prints a warning telling you to add the value there (needs admin). It does
+   **not** edit that file for you — it's a machine-level security control.
 
 ### Interactive vs headless
 

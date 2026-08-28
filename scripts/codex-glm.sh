@@ -47,16 +47,39 @@ set -a; . "$ENV_FILE"; set +a
 MODEL="${GLM_MODEL_NAME:-glm53-uncensored}"
 CTX="${GLM_MAX_CONTEXT:-1048576}"
 OUT="${GLM_MAX_OUTPUT:-16384}"
-# Least-prompting combo allowed by a typical managed policy. Override in .env.
-APPROVAL="${CODEX_APPROVAL:-on-request}"
-SANDBOX="${CODEX_SANDBOX:-workspace-write}"
-# --yolo: no prompts, no sandbox. Codex refuses unless the machine policy
-# allows 'never' and 'danger-full-access'. A malicious file in any repo you
-# open can then run arbitrary commands - do not use with untrusted code.
-if [ "$YOLO" = "1" ]; then APPROVAL="never"; SANDBOX="danger-full-access"; fi
+# Approval + sandbox. Default is no prompts. Override in .env (CODEX_APPROVAL /
+# CODEX_SANDBOX) or soften per-run with --auto-mode.
+APPROVAL="${CODEX_APPROVAL:-never}"
+SANDBOX="${CODEX_SANDBOX:-danger-full-access}"
+[ "$AUTO" = "1" ] && { APPROVAL="on-request"; SANDBOX="workspace-write"; }
+[ "$YOLO" = "1" ] && { APPROVAL="never"; SANDBOX="danger-full-access"; }
 
 command -v codex >/dev/null 2>&1 || {
   echo "ERROR: codex not installed. Install with:  npm install -g @openai/codex"; exit 1; }
+
+# Codex reads MANAGED DEFAULTS from a fixed path (~/.codex/managed_config.toml),
+# and they override per-session config and CLI flags. So prompting is controlled
+# here, not in the scoped config below. NOTE: this file is GLOBAL - it affects
+# every Codex session on this machine, not only this launcher.
+GLOBAL_HOME="${HOME:-$USERPROFILE}/.codex"
+mkdir -p "$GLOBAL_HOME"
+MC="$GLOBAL_HOME/managed_config.toml"
+[ -f "$MC" ] && [ ! -f "$MC.bak" ] && cp "$MC" "$MC.bak"
+printf 'approval_policy = "%s"\nsandbox_mode    = "%s"\n' "$APPROVAL" "$SANDBOX" > "$MC"
+echo "codex prompting: approval=$APPROVAL sandbox=$SANDBOX  (global, in $MC)" >&2
+
+# The machine fence (requirements.toml) must permit the chosen values or Codex
+# ignores them. Detect and warn - editing it needs admin, so we don't touch it.
+for REQ in "/c/ProgramData/OpenAI/Codex/requirements.toml" "/etc/codex/requirements.toml"; do
+  if [ -f "$REQ" ]; then
+    if ! grep -q "allowed_approval_policies" "$REQ" || grep "allowed_approval_policies" "$REQ" | grep -q "\"$APPROVAL\""; then :; else
+      echo "WARN: $REQ does not allow approval_policy=\"$APPROVAL\"." >&2
+      echo "      Codex will fall back and keep prompting. As admin, add it to" >&2
+      echo "      allowed_approval_policies in that file (needs elevation)." >&2
+    fi
+    break
+  fi
+done
 
 export CODEX_HOME="$ROOT/.codex-home"
 mkdir -p "$CODEX_HOME"

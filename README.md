@@ -144,12 +144,25 @@ For even fewer prompts, add **`--auto-mode`** (aliases `-y`, `--yes`):
 That also lets Codex reach the **network** from inside the workspace without asking. Only
 actions *outside* the workspace still prompt.
 
-**You may not be able to silence it completely.** Managed installs can enforce an outer
-policy (`ProgramData/OpenAI/Codex/requirements.toml` on Windows) that forbids fully-silent
-mode - `--dangerously-bypass-approvals-and-sandbox` and `--full-auto` are blocked there. On
-such a machine `on-request` + `workspace-write` is the floor, and `--auto-mode` takes you
-exactly to it. On an unmanaged machine you can go further by setting `CODEX_APPROVAL` /
-`CODEX_SANDBOX` in `.env`.
+For **zero** prompts, add **`--yolo`** — no approvals, no sandbox
+(`approval_policy = never`, `sandbox_mode = danger-full-access`):
+
+```bash
+./scripts/codex-glm.sh --yolo
+```
+```powershell
+.\scripts\codex-glm.ps1 --yolo
+```
+
+> **Only for code you trust.** With no sandbox and no approvals, a malicious instruction in
+> any repo, web page, or tool output Codex reads can run arbitrary commands on your machine
+> with zero confirmation. Never point `--yolo` at an untrusted repository.
+
+**Managed machines may forbid this.** An enforced policy
+(`ProgramData/OpenAI/Codex/requirements.toml` on Windows) can restrict which approval and
+sandbox modes are allowed. If `never` / `danger-full-access` are not in its allow-lists,
+Codex refuses `--yolo` and falls back — then `on-request` + `workspace-write` (`--auto-mode`)
+is your floor. You can also set `CODEX_APPROVAL` / `CODEX_SANDBOX` directly in `.env`.
 
 Override the defaults per-machine in `.env`:
 

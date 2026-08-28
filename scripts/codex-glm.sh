@@ -5,20 +5,24 @@
 # Usage: codex-glm.sh [-e /path/to/.env] [--auto-mode] [codex args...]
 #   -e/--env      path to the .env to use (else: nearest .env from cwd upward,
 #                 else the repo's own .env)
-#   --auto-mode   run with the least prompting your policy allows: edit/run in
-#     (-y,--yes)  the workspace AND reach the network without asking; only
-#                 out-of-workspace actions still prompt. A managed policy may
-#                 forbid fully-silent mode - this goes as far as it permits.
+#   --auto-mode   least prompting a managed policy allows: edit/run in the
+#     (-y,--yes)  workspace AND reach the network without asking; only
+#                 out-of-workspace actions still prompt.
+#   --yolo        no approval prompts, no sandbox (approval=never,
+#                 danger-full-access). Requires the machine policy to permit
+#                 it, or Codex refuses. Unsafe with untrusted code.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ENV_FILE=""
 AUTO=0
+YOLO=0
 FWD=()
 while [ $# -gt 0 ]; do
   case "$1" in
     -e|--env) ENV_FILE="${2:-}"; shift 2 ;;
     --auto-mode|-y|--yes) AUTO=1; shift ;;
+    --yolo) YOLO=1; shift ;;
     *) FWD+=("$1"); shift ;;
   esac
 done
@@ -46,6 +50,10 @@ OUT="${GLM_MAX_OUTPUT:-16384}"
 # Least-prompting combo allowed by a typical managed policy. Override in .env.
 APPROVAL="${CODEX_APPROVAL:-on-request}"
 SANDBOX="${CODEX_SANDBOX:-workspace-write}"
+# --yolo: no prompts, no sandbox. Codex refuses unless the machine policy
+# allows 'never' and 'danger-full-access'. A malicious file in any repo you
+# open can then run arbitrary commands - do not use with untrusted code.
+if [ "$YOLO" = "1" ]; then APPROVAL="never"; SANDBOX="danger-full-access"; fi
 
 command -v codex >/dev/null 2>&1 || {
   echo "ERROR: codex not installed. Install with:  npm install -g @openai/codex"; exit 1; }
@@ -71,7 +79,7 @@ env_key = "GLM_API_KEY"
 base_url = "$GLM_BASE_URL"
 wire_api = "responses"
 TOML
-if [ "$AUTO" = "1" ]; then
+if [ "$AUTO" = "1" ] && [ "$YOLO" != "1" ]; then
 cat <<TOML
 
 # --auto-mode: allow network from inside the workspace sandbox without prompting.
@@ -81,6 +89,7 @@ TOML
 fi
 } > "$CODEX_HOME/config.toml"
 
-[ "$AUTO" = "1" ] && echo "auto-mode: on (workspace + network run without prompting; policy still gates out-of-workspace)" >&2
+[ "$AUTO" = "1" ] && [ "$YOLO" != "1" ] && echo "auto-mode: on (workspace + network run without prompting; policy still gates out-of-workspace)" >&2
+[ "$YOLO" = "1" ] && echo "YOLO: no approvals, no sandbox. Do not run untrusted code under this." >&2
 echo "Codex -> GLM at $GLM_BASE_URL (model $MODEL)"
 exec codex "$@"

@@ -4,10 +4,12 @@
 # Usage: codex-glm.ps1 [-e C:\path\to\.env] [--auto-mode] [codex args...]
 #   -e / --env    path to the .env (else: nearest .env from cwd upward, else
 #                 the repo's own .env)
-#   --auto-mode   run with the least prompting your policy allows: edit/run in
-#     (-y,--yes)  the workspace AND reach the network without asking; only
-#                 out-of-workspace actions still prompt. A managed policy may
-#                 forbid fully-silent mode - this goes as far as it permits.
+#   --auto-mode   least prompting a managed policy allows: edit/run in the
+#     (-y,--yes)  workspace AND reach the network without asking; only
+#                 out-of-workspace actions still prompt.
+#   --yolo        no approval prompts, no sandbox (approval=never,
+#                 danger-full-access). Requires the machine policy to permit
+#                 it, or Codex refuses. Unsafe with untrusted code.
 param(
   [Alias("e")][string]$EnvFile,
   [Parameter(Position=0, ValueFromRemainingArguments=$true)]$Rest
@@ -15,11 +17,13 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 
-# Pull the auto-mode switch out of the forwarded args.
+# Pull the auto-mode / yolo switches out of the forwarded args.
 $auto = $false
+$yolo = $false
 $fwd = @()
 foreach ($a in $Rest) {
   if ($a -eq "--auto-mode" -or $a -eq "-y" -or $a -eq "--yes") { $auto = $true }
+  elseif ($a -eq "--yolo") { $yolo = $true }
   else { $fwd += $a }
 }
 
@@ -56,6 +60,10 @@ $ctx      = if ($env:GLM_MAX_CONTEXT) { $env:GLM_MAX_CONTEXT } else { "1048576" 
 $out      = if ($env:GLM_MAX_OUTPUT)  { $env:GLM_MAX_OUTPUT }  else { "16384" }
 $approval = if ($env:CODEX_APPROVAL) { $env:CODEX_APPROVAL } else { "on-request" }
 $sandbox  = if ($env:CODEX_SANDBOX)  { $env:CODEX_SANDBOX }  else { "workspace-write" }
+# --yolo: no prompts, no sandbox. Codex refuses unless the machine policy
+# allows 'never' and 'danger-full-access'. A malicious file in any repo you
+# open can then run arbitrary commands - do not use with untrusted code.
+if ($yolo) { $approval = "never"; $sandbox = "danger-full-access" }
 
 if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
   throw "codex not installed. Install with:  npm install -g @openai/codex"
@@ -81,7 +89,7 @@ env_key = "GLM_API_KEY"
 base_url = "$env:GLM_BASE_URL"
 wire_api = "responses"
 "@
-if ($auto) {
+if ($auto -and -not $yolo) {
   $config += @"
 
 # --auto-mode: allow network from inside the workspace sandbox without prompting.
@@ -91,6 +99,7 @@ network_access = true
 }
 Set-Content -Path "$env:CODEX_HOME\config.toml" -Value $config -Encoding ascii
 
-if ($auto) { Write-Host "auto-mode: on (workspace + network run without prompting; policy still gates out-of-workspace)" -ForegroundColor DarkGray }
+if ($auto -and -not $yolo) { Write-Host "auto-mode: on (workspace + network run without prompting; policy still gates out-of-workspace)" -ForegroundColor DarkGray }
+if ($yolo) { Write-Host "YOLO: no approvals, no sandbox. Do not run untrusted code under this." -ForegroundColor Yellow }
 Write-Host "Codex -> GLM at $env:GLM_BASE_URL (model $model)" -ForegroundColor Green
 if ($fwd) { codex @fwd } else { codex }

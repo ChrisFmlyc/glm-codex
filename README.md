@@ -59,6 +59,21 @@ GLM_API_KEY=REPLACE_WITH_YOUR_ENDPOINT_KEY
 
 Leave everything else as-is. Both paths read from this one `.env`.
 
+**Where the scripts look for `.env`:** every launcher resolves it in this order —
+
+1. an explicit `-e <path>` (or `--env <path>`) flag, if you pass one;
+2. otherwise the nearest `.env` searching from your current directory **upward**.
+
+So you can keep a single shared `.env` in a parent directory and run the scripts from
+anywhere beneath it, or point at any file explicitly:
+
+```bash
+./scripts/codex-glm.sh -e ~/secrets/glm.env
+```
+```powershell
+.\scripts\codex-glm.ps1 -e C:\secrets\glm.env
+```
+
 ---
 
 ## Path A — Codex CLI (recommended, no proxy)

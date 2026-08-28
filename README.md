@@ -91,6 +91,23 @@ Responses API natively. See `codex/config.example.toml` for what it produces.
 If your server's `--served-model-name` is not `glm53-uncensored`, set `GLM_MODEL_NAME` in
 `.env`.
 
+### What to expect
+
+Two warnings print at startup. Both are harmless:
+
+- **`Model metadata for <model> not found`** — Codex has no built-in card for a self-hosted
+  model. The launcher sets `model_context_window` from `.env`, but the warning stays and,
+  because of an [upstream bug](https://github.com/openai/codex/issues/19185), Codex caps a
+  custom provider's context near **258K** regardless of the value. Fine for most work;
+  don't rely on the full window here.
+- **`approval_policy ... disallowed by requirements`** — only on machines with a managed
+  Codex policy (`ProgramData/OpenAI/Codex/requirements.toml`). Codex falls back to prompting
+  for approval, which is the safe default.
+
+**Run it interactively.** On a machine with the managed approval policy, `codex exec`
+(headless) cannot run shell commands — it has no way to prompt, so tool calls are rejected.
+The interactive launcher prompts you to approve each action and works normally.
+
 ---
 
 ## Path B — Claude Code (via LiteLLM proxy)

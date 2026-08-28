@@ -18,6 +18,8 @@ Get-Content "$root\.env" | ForEach-Object {
 if (-not $env:GLM_BASE_URL) { throw "GLM_BASE_URL missing from .env" }
 if (-not $env:GLM_API_KEY)  { throw "GLM_API_KEY missing from .env" }
 $model = if ($env:GLM_MODEL_NAME) { $env:GLM_MODEL_NAME } else { "glm53-uncensored" }
+$ctx   = if ($env:GLM_MAX_CONTEXT) { $env:GLM_MAX_CONTEXT } else { "1048576" }
+$out   = if ($env:GLM_MAX_OUTPUT)  { $env:GLM_MAX_OUTPUT }  else { "16384" }
 
 if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
   Write-Host "ERROR: codex not installed. Install it with:  npm install -g @openai/codex" -ForegroundColor Red
@@ -32,6 +34,13 @@ $config = @"
 # Generated from .env by scripts/codex-glm.ps1 - do not edit by hand.
 model = "$model"
 model_provider = "glm"
+
+# Top-level, BEFORE the provider table (TOML tables capture everything after
+# them). Without this Codex warns "metadata not found" and assumes a small
+# window. Note: Codex currently caps custom providers near 258K regardless
+# (upstream bug), so you may not get the full value.
+model_context_window = $ctx
+model_max_output_tokens = $out
 
 [model_providers.glm]
 name = "GLM (self-hosted)"

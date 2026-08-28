@@ -62,10 +62,13 @@ Leave everything else as-is. Both paths read from this one `.env`.
 **Where the scripts look for `.env`:** every launcher resolves it in this order —
 
 1. an explicit `-e <path>` (or `--env <path>`) flag, if you pass one;
-2. otherwise the nearest `.env` searching from your current directory **upward**.
+2. otherwise the nearest `.env` searching from your current directory **upward**;
+3. otherwise the repo's own `.env` (the one beside these scripts).
 
-So you can keep a single shared `.env` in a parent directory and run the scripts from
-anywhere beneath it, or point at any file explicitly:
+Step 3 means you can run a launcher from an unrelated working directory — your actual
+project — and it still finds the endpoint config that lives with the repo, no flag needed.
+You can also keep a single shared `.env` in a parent directory, or point at any file
+explicitly:
 
 ```bash
 ./scripts/codex-glm.sh -e ~/secrets/glm.env

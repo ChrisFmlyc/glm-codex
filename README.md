@@ -68,29 +68,27 @@ dependency tree. The installer **checks the release version first** and refuses 
 cp .env.example .env      # Windows: Copy-Item .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` and change **these two lines only**:
 
 ```ini
 GLM_BASE_URL=https://YOUR-POD-ID-8000.proxy.runpod.net/v1
 GLM_API_KEY=REPLACE_WITH_YOUR_ENDPOINT_KEY
-LITELLM_MASTER_KEY=sk-local-REPLACE_ME
-GLM_MAX_CONTEXT=1048576
-GLM_MAX_OUTPUT=16384
 ```
 
-| Variable | What it is |
-|---|---|
-| `GLM_BASE_URL` | Your endpoint, **ending in `/v1`** |
-| `GLM_API_KEY` | The key your server expects (vLLM's `--api-key`) |
-| `LITELLM_MASTER_KEY` | A key **you invent** for the local proxy. Not your endpoint key |
-| `GLM_MAX_CONTEXT` | Must match your server's `--max-model-len` |
-| `GLM_MAX_OUTPUT` | Max tokens in a single response |
+Leave everything else as it comes. Full reference:
 
-Generate a master key:
+| Variable | What it is | Who sets it |
+|---|---|---|
+| `GLM_BASE_URL` | Your endpoint, **ending in `/v1`** | **you** |
+| `GLM_API_KEY` | The key your server expects (vLLM's `--api-key`) | **you** |
+| `LITELLM_MASTER_KEY` | Local proxy credential | **auto-generated on first run** |
+| `GLM_MAX_CONTEXT` | Must match your server's `--max-model-len` | default 1048576 |
+| `GLM_MAX_OUTPUT` | Max tokens in a single response | default 16384 |
+| `LITELLM_PORT` | Local proxy port | default 4000 |
 
-```bash
-python -c "import secrets; print('sk-local-' + secrets.token_urlsafe(24))"
-```
+`LITELLM_MASTER_KEY` only authenticates Claude Code to the proxy running on
+**your own machine**. It never crosses the network and your endpoint never sees it,
+so `start-proxy` generates one on first run and writes it back to `.env`. Leave it alone.
 
 If your server uses a different `--served-model-name` than `glm53-uncensored`, change the
 two `model:` lines in `litellm/config.yaml`.

@@ -14,8 +14,26 @@ Get-Content "$root\.env" | ForEach-Object {
   }
 }
 
-foreach ($v in @("GLM_BASE_URL","GLM_API_KEY","LITELLM_MASTER_KEY")) {
+foreach ($v in @("GLM_BASE_URL","GLM_API_KEY")) {
   if (-not [Environment]::GetEnvironmentVariable($v)) { throw "$v missing from .env" }
+}
+
+# The master key only authenticates Claude Code to THIS local proxy. It never
+# leaves the machine, so generate it once and persist it to .env.
+if (-not $env:LITELLM_MASTER_KEY -or $env:LITELLM_MASTER_KEY -eq "sk-local-REPLACE_ME") {
+  $bytes = New-Object byte[] 18
+  [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+  $gen = "sk-local-" + [Convert]::ToBase64String($bytes).Replace("+","-").Replace("/","_").TrimEnd("=")
+  $envFile = "$root\.env"
+  $content = Get-Content $envFile
+  if ($content -match '^LITELLM_MASTER_KEY=') {
+    $content = $content -replace '^LITELLM_MASTER_KEY=.*', "LITELLM_MASTER_KEY=$gen"
+    Set-Content -Path $envFile -Value $content -Encoding ascii
+  } else {
+    Add-Content -Path $envFile -Value "LITELLM_MASTER_KEY=$gen" -Encoding ascii
+  }
+  $env:LITELLM_MASTER_KEY = $gen
+  Write-Host "Generated a local proxy key and saved it to .env" -ForegroundColor DarkGray
 }
 $port = if ($env:LITELLM_PORT) { $env:LITELLM_PORT } else { "4000" }
 

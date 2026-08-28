@@ -8,9 +8,24 @@ cd "$ROOT"
 [ -f .env ] || { echo "ERROR: .env not found. Copy .env.example to .env and fill it in."; exit 1; }
 set -a; . ./.env; set +a
 
-: "${GLM_BASE_URL:?missing in .env}"
-: "${GLM_API_KEY:?missing in .env}"
-: "${LITELLM_MASTER_KEY:?missing in .env}"
+: "${GLM_BASE_URL:?missing in .env - set it to your endpoint URL}"
+: "${GLM_API_KEY:?missing in .env - set it to your endpoint key}"
+
+# The master key only authenticates Claude Code to THIS local proxy. It never
+# leaves the machine, so there is no reason to make the user invent one.
+# Generate it once and persist it to .env.
+if [ -z "${LITELLM_MASTER_KEY:-}" ] || [ "$LITELLM_MASTER_KEY" = "sk-local-REPLACE_ME" ]; then
+  GEN="sk-local-$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))' 2>/dev/null         || python -c 'import secrets; print(secrets.token_urlsafe(24))')"
+  if grep -q '^LITELLM_MASTER_KEY=' .env; then
+    tmp=$(mktemp); sed "s|^LITELLM_MASTER_KEY=.*|LITELLM_MASTER_KEY=$GEN|" .env > "$tmp" && mv "$tmp" .env
+  else
+    printf '
+LITELLM_MASTER_KEY=%s
+' "$GEN" >> .env
+  fi
+  export LITELLM_MASTER_KEY="$GEN"
+  echo "Generated a local proxy key and saved it to .env"
+fi
 PORT="${LITELLM_PORT:-4000}"
 
 VENV="$ROOT/.venv"

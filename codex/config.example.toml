@@ -1,0 +1,14 @@
+# Reference only. The launcher (scripts/codex-glm.*) GENERATES the real
+# config.toml from your .env at runtime, into a scoped CODEX_HOME so it never
+# touches your global ~/.codex. You do not need to edit this file.
+#
+# This is what it produces:
+
+model = "glm53-uncensored"
+model_provider = "glm"
+
+[model_providers.glm]
+name = "GLM (self-hosted)"
+env_key = "GLM_API_KEY"          # Codex reads the bearer token from this env var
+base_url = "https://YOUR-POD-ID-8000.proxy.runpod.net/v1"
+wire_api = "responses"           # vLLM implements the Responses API natively

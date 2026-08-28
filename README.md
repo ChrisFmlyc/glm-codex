@@ -1,45 +1,109 @@
-# Claude Code on GLM-5.3-Flash
+# GLM-5.3-Flash in your terminal agent
 
-Run **Claude Code** against your own self-hosted **GLM-5.3-Flash** endpoint instead of
-Anthropic's models.
+Drive a terminal coding agent with your own self-hosted **GLM-5.3-Flash** endpoint.
+Two paths are supported:
 
-Works on **Linux, macOS and Windows**. Nothing here is specific to a particular host —
-if your model is served behind an OpenAI-compatible API, this will connect to it.
+- **Codex CLI** — connects **directly** to your endpoint, no proxy. Simpler and, for a
+  self-hosted model, usually the more reliable of the two.
+- **Claude Code** — needs a small local proxy in between, because it speaks a different API.
+
+Works on **Linux, macOS and Windows**. Nothing here is specific to one server — anything
+serving an OpenAI-compatible API will connect.
 
 ---
 
-## Why this exists
+## Which one?
 
-Claude Code speaks the **Anthropic Messages API**. vLLM (and most self-hosted servers)
-speak the **OpenAI Chat Completions API**. They are not interchangeable — different
-request shapes, different response shapes, different tool-calling conventions.
+| | Codex CLI | Claude Code |
+|---|---|---|
+| API your server needs | Responses API (`/v1/responses`) | Anthropic Messages (via proxy) |
+| Proxy required | **No** | Yes (LiteLLM) |
+| Extra install | `codex` | `codex` not needed; Python + LiteLLM |
+| Prompting tuned for | model-neutral | Claude specifically |
+| Setup below | **Path A** | **Path B** |
 
-[LiteLLM](https://github.com/BerriAI/litellm) sits between them and translates.
+Codex talks the Responses API, which vLLM implements natively — so there is no translation
+layer to misbehave. Claude Code speaks the Anthropic Messages API, which no OpenAI server
+speaks, so a proxy has to translate every call. Fewer moving parts is why Codex is listed
+first.
+
+> **A note on the model.** Both agents are only as good as the model behind them.
+> GLM-5.3-Flash handles chat well but can be unreliable at long agentic tool-use — expect
+> the occasional stuck loop or malformed tool call regardless of which agent you pick. That
+> is the model and its tool-call parser, not the agent. Switching agents may help; it will
+> not make a marginal model into a strong one.
+
+---
+
+## Requirements (both paths)
+
+- A **running GLM endpoint** with an OpenAI-compatible API — RunPod, a local vLLM, anything
+- The endpoint started with tool calling enabled, or agentic use will not work:
+
+  ```
+  --enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm45
+  ```
+
+- **Node.js** (for the `codex` CLI) and/or **Python 3.10+** (for the Claude Code proxy)
+
+Copy the config template and fill in **two values** — your endpoint URL and key:
+
+```bash
+cp .env.example .env      # Windows: Copy-Item .env.example .env
+```
+
+```ini
+GLM_BASE_URL=https://YOUR-POD-ID-8000.proxy.runpod.net/v1
+GLM_API_KEY=REPLACE_WITH_YOUR_ENDPOINT_KEY
+```
+
+Leave everything else as-is. Both paths read from this one `.env`.
+
+---
+
+## Path A — Codex CLI (recommended, no proxy)
+
+### 1. Install Codex
+
+```bash
+npm install -g @openai/codex
+```
+
+### 2. Run
+
+**Linux / macOS**
+```bash
+./scripts/codex-glm.sh
+```
+
+**Windows**
+```powershell
+.\scripts\codex-glm.ps1
+```
+
+That's it — no proxy, no second terminal. The launcher reads `.env`, writes a Codex config
+into a **scoped `CODEX_HOME`** inside the repo (so your global `~/.codex` is never touched),
+and starts Codex pointed at your endpoint.
+
+The generated config uses `wire_api = "responses"` because vLLM implements the OpenAI
+Responses API natively. See `codex/config.example.toml` for what it produces.
+
+If your server's `--served-model-name` is not `glm53-uncensored`, set `GLM_MODEL_NAME` in
+`.env`.
+
+---
+
+## Path B — Claude Code (via LiteLLM proxy)
+
+Claude Code cannot talk to your endpoint directly. It speaks the **Anthropic Messages
+API**; vLLM speaks **OpenAI**. [LiteLLM](https://github.com/BerriAI/litellm) sits between
+them and translates.
 
 ```
 Claude Code  ──Anthropic /v1/messages──▶  LiteLLM :4000  ──OpenAI /v1──▶  your GLM server
 ```
 
-You run the proxy locally. Nothing leaves your machine except the calls to your own endpoint.
-
----
-
-## Requirements
-
-- **Python 3.10+**
-- **Claude Code** installed and working
-- A **running GLM endpoint** with an OpenAI-compatible API — RunPod, a local vLLM, anything
-- Two terminals (the proxy runs in the foreground)
-
-Your server should be started with tool calling enabled, or agentic use will not work:
-
-```
---enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm45
-```
-
----
-
-## Setup
+The proxy runs locally; nothing leaves your machine except calls to your own endpoint.
 
 ### 1. Clone and install
 
@@ -62,25 +126,17 @@ This creates a `.venv` and installs LiteLLM. It takes a few minutes — it pulls
 dependency tree. The installer **checks the release version first** and refuses to install
 `1.82.7` or `1.82.8`, which were [compromised with credential-stealing malware](https://github.com/BerriAI/litellm/issues).
 
-### 2. Configure
+The installer **checks the LiteLLM release first** and refuses `1.82.7` / `1.82.8`, which
+were compromised with credential-stealing malware.
 
-```bash
-cp .env.example .env      # Windows: Copy-Item .env.example .env
-```
-
-Edit `.env` and change **these two lines only**:
-
-```ini
-GLM_BASE_URL=https://YOUR-POD-ID-8000.proxy.runpod.net/v1
-GLM_API_KEY=REPLACE_WITH_YOUR_ENDPOINT_KEY
-```
-
-Leave everything else as it comes. Full reference:
+You already filled in `.env` above. The proxy reads the same file — no extra config. Full
+reference of what it contains:
 
 | Variable | What it is | Who sets it |
 |---|---|---|
 | `GLM_BASE_URL` | Your endpoint, **ending in `/v1`** | **you** |
 | `GLM_API_KEY` | The key your server expects (vLLM's `--api-key`) | **you** |
+| `GLM_MODEL_NAME` | Your server's `--served-model-name` | default `glm53-uncensored` |
 | `LITELLM_MASTER_KEY` | Local proxy credential | **auto-generated on first run** |
 | `GLM_MAX_CONTEXT` | Must match your server's `--max-model-len` | default 1048576 |
 | `GLM_MAX_OUTPUT` | Max tokens in a single response | default 16384 |
@@ -90,10 +146,7 @@ Leave everything else as it comes. Full reference:
 **your own machine**. It never crosses the network and your endpoint never sees it,
 so `start-proxy` generates one on first run and writes it back to `.env`. Leave it alone.
 
-If your server uses a different `--served-model-name` than `glm53-uncensored`, change the
-two `model:` lines in `litellm/config.yaml`.
-
-### 3. Run
+### 2. Run
 
 Two terminals.
 
@@ -114,9 +167,10 @@ failure inside Claude Code.
 
 ---
 
-## The context window trap
+## The context window trap (Claude Code / Path B only)
 
-**This is the single most important thing in this repo.**
+**If you use Path B, this is the single most important thing in this repo.** Codex reads
+the context window from your endpoint's `/v1/models`, so Path A does not have this problem.
 
 Setting the context window in LiteLLM is **not enough**. Claude Code resolves the context
 window from its own internal model list and never asks the proxy. For a model it does not
@@ -250,16 +304,18 @@ client needs updating separately.
 ## Layout
 
 ```
-.env.example          copy to .env and fill in
-litellm/config.yaml   proxy config; reads everything from .env
+.env.example              copy to .env; fill in two values
+codex/
+  config.example.toml     reference for what codex-glm generates
+litellm/config.yaml       proxy config (Claude Code path); reads from .env
 scripts/
-  install.sh          one-time setup      (Linux/macOS)
-  install.ps1         one-time setup      (Windows)
-  start-proxy.sh      run the proxy       (Linux/macOS)
-  start-proxy.ps1     run the proxy       (Windows)
-  claude-glm.sh       launch Claude Code  (Linux/macOS)
-  claude-glm.ps1      launch Claude Code  (Windows)
+  codex-glm.sh   / .ps1   Path A: launch Codex CLI          (no proxy)
+  install.sh     / .ps1   Path B: one-time LiteLLM setup
+  start-proxy.sh / .ps1   Path B: run the proxy
+  claude-glm.sh  / .ps1   Path B: launch Claude Code
 ```
+
+Path A (Codex) uses only `codex-glm`. Path B (Claude Code) uses the other three.
 
 ## Licence
 

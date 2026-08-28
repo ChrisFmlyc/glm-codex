@@ -102,4 +102,8 @@ Set-Content -Path "$env:CODEX_HOME\config.toml" -Value $config -Encoding ascii
 if ($auto -and -not $yolo) { Write-Host "auto-mode: on (workspace + network run without prompting; policy still gates out-of-workspace)" -ForegroundColor DarkGray }
 if ($yolo) { Write-Host "YOLO: no approvals, no sandbox. Do not run untrusted code under this." -ForegroundColor Yellow }
 Write-Host "Codex -> GLM at $env:GLM_BASE_URL (model $model)" -ForegroundColor Green
-if ($fwd) { codex @fwd } else { codex }
+if ($yolo) {
+  # Also pass Codex's own bypass flag. An enterprise-managed policy can still
+  # override this and re-assert prompts - that is enforced above the CLI.
+  codex --dangerously-bypass-approvals-and-sandbox @fwd
+} elseif ($fwd) { codex @fwd } else { codex }

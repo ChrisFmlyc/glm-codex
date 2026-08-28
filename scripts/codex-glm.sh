@@ -92,4 +92,11 @@ fi
 [ "$AUTO" = "1" ] && [ "$YOLO" != "1" ] && echo "auto-mode: on (workspace + network run without prompting; policy still gates out-of-workspace)" >&2
 [ "$YOLO" = "1" ] && echo "YOLO: no approvals, no sandbox. Do not run untrusted code under this." >&2
 echo "Codex -> GLM at $GLM_BASE_URL (model $MODEL)"
-exec codex "$@"
+if [ "$YOLO" = "1" ]; then
+  # Also pass Codex's own bypass flag. Note: an enterprise-managed policy can
+  # still override this and re-assert approval prompts - that is enforced above
+  # the CLI and no local flag defeats it.
+  exec codex --dangerously-bypass-approvals-and-sandbox "$@"
+else
+  exec codex "$@"
+fi

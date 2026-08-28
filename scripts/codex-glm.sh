@@ -27,7 +27,9 @@ else
     if [ -f "$d/.env" ]; then ENV_FILE="$d/.env"; break; fi
     parent="$(dirname "$d")"; [ "$parent" = "$d" ] && break; d="$parent"
   done
-  [ -n "$ENV_FILE" ] || { echo "ERROR: no .env found in $PWD or any parent directory."; echo "Pass one with:  $(basename "$0") -e /path/to/.env"; exit 1; }
+  # final fallback: the repo's own .env (next to the scripts)
+  [ -n "$ENV_FILE" ] || { [ -f "$ROOT/.env" ] && ENV_FILE="$ROOT/.env"; }
+  [ -n "$ENV_FILE" ] || { echo "ERROR: no .env found in $PWD, any parent, or the repo ($ROOT)."; echo "Pass one with:  $(basename "$0") -e /path/to/.env"; exit 1; }
 fi
 echo "using env: $ENV_FILE" >&2
 set -a; . "$ENV_FILE"; set +a

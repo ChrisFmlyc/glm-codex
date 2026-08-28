@@ -6,12 +6,12 @@
 #        current directory upward is used.
 param(
   [Alias("e")][string]$EnvFile,
-  [Parameter(ValueFromRemainingArguments=$true)]$Rest
+  [Parameter(Position=0, ValueFromRemainingArguments=$true)]$Rest
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 
-function Resolve-EnvFile([string]$explicit) {
+function Resolve-EnvFile([string]$explicit, [string]$repoRoot) {
   if ($explicit) {
     if (-not (Test-Path $explicit)) { throw "--env file not found: $explicit" }
     return (Resolve-Path $explicit).Path
@@ -24,10 +24,13 @@ function Resolve-EnvFile([string]$explicit) {
     if (-not $parent -or $parent -eq $d) { break }
     $d = $parent
   }
-  throw "no .env found in $((Get-Location).Path) or any parent. Pass one with -e <path>."
+  # final fallback: the repo's own .env (next to the scripts)
+  $repoEnv = Join-Path $repoRoot ".env"
+  if (Test-Path $repoEnv) { return $repoEnv }
+  throw "no .env found in $((Get-Location).Path), any parent, or the repo ($repoRoot). Pass one with -e <path>."
 }
 
-$envFilePath = Resolve-EnvFile $EnvFile
+$envFilePath = Resolve-EnvFile $EnvFile $root
 Write-Host "using env: $envFilePath" -ForegroundColor DarkGray
 Get-Content $envFilePath | ForEach-Object {
   if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$') {

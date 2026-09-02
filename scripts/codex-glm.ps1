@@ -28,6 +28,8 @@ foreach ($a in $Rest) {
 }
 
 function Resolve-EnvFile([string]$explicit, [string]$repoRoot) {
+  # Returns the .env path to use. If none exists yet, returns the repo's own
+  # .env path as the place to CREATE one - the script prompts and writes it.
   if ($explicit) {
     if (-not (Test-Path $explicit)) { throw "--env file not found: $explicit" }
     return (Resolve-Path $explicit).Path
@@ -40,24 +42,90 @@ function Resolve-EnvFile([string]$explicit, [string]$repoRoot) {
     if (-not $parent -or $parent -eq $d) { break }
     $d = $parent
   }
-  $repoEnv = Join-Path $repoRoot ".env"
-  if (Test-Path $repoEnv) { return $repoEnv }
-  throw "no .env found in $((Get-Location).Path), any parent, or the repo ($repoRoot). Pass one with -e <path>."
+  return (Join-Path $repoRoot ".env")
 }
 
-$envFilePath = Resolve-EnvFile $EnvFile $root
-Write-Host "using env: $envFilePath" -ForegroundColor DarkGray
-Get-Content $envFilePath | ForEach-Object {
-  if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$') {
-    [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2].Trim(), "Process")
+# Upsert one KEY=value line in an env file (create the file if needed).
+function Save-EnvValue([string]$file, [string]$key, [string]$value) {
+  $line = "$key=$value"
+  $pat  = "^\s*$([regex]::Escape($key))\s*="
+  if (Test-Path $file) {
+    $lines = @(Get-Content -LiteralPath $file)
+    if (@($lines | Where-Object { $_ -match $pat }).Count -gt 0) {
+      $lines = $lines | ForEach-Object { if ($_ -match $pat) { $line } else { $_ } }
+    } else {
+      $lines += $line
+    }
+  } else {
+    $lines = @($line)
+  }
+  Set-Content -LiteralPath $file -Value $lines -Encoding ascii
+}
+
+# Prompt until the user gives a non-empty value.
+function Read-Required([string]$prompt) {
+  while ($true) {
+    $v = (Read-Host $prompt)
+    if ($null -ne $v) { $v = $v.Trim() }
+    if ($v) { return $v }
+    Write-Host "  a value is required." -ForegroundColor Yellow
   }
 }
 
-if (-not $env:GLM_BASE_URL) { throw "GLM_BASE_URL missing from env file" }
-if (-not $env:GLM_API_KEY)  { throw "GLM_API_KEY missing from env file" }
+$envFilePath = Resolve-EnvFile $EnvFile $root
+if (Test-Path $envFilePath) {
+  Write-Host "using env: $envFilePath" -ForegroundColor DarkGray
+  Get-Content $envFilePath | ForEach-Object {
+    if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$') {
+      [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2].Trim(), "Process")
+    }
+  }
+} else {
+  Write-Host "no .env found - will create $envFilePath" -ForegroundColor DarkGray
+}
+
+# Only GLM_BASE_URL and GLM_API_KEY are required. If either is missing, ask for
+# it and persist to the .env so next launch just works. (Testing tool - the key
+# is entered in plain text on purpose.)
+if (-not $env:GLM_BASE_URL) {
+  Write-Host "GLM_BASE_URL is not set." -ForegroundColor Yellow
+  $u = Read-Required "  endpoint base URL (e.g. https://<POD_ID>-8000.proxy.runpod.net/v1)"
+  $u = $u.TrimEnd('/')
+  if ($u -notmatch '/v1$') { $u = "$u/v1"; Write-Host "  normalized to $u" -ForegroundColor DarkGray }
+  $env:GLM_BASE_URL = $u
+  Save-EnvValue $envFilePath "GLM_BASE_URL" $u
+  Write-Host "  saved GLM_BASE_URL to $envFilePath" -ForegroundColor DarkGray
+}
+if (-not $env:GLM_API_KEY) {
+  Write-Host "GLM_API_KEY is not set." -ForegroundColor Yellow
+  $k = Read-Required "  endpoint API key (the vLLM --api-key)"
+  $env:GLM_API_KEY = $k
+  Save-EnvValue $envFilePath "GLM_API_KEY" $k
+  Write-Host "  saved GLM_API_KEY to $envFilePath" -ForegroundColor DarkGray
+}
 $model    = if ($env:GLM_MODEL_NAME) { $env:GLM_MODEL_NAME } else { "glm53-uncensored" }
 $ctx      = if ($env:GLM_MAX_CONTEXT) { $env:GLM_MAX_CONTEXT } else { "1048576" }
 $out      = if ($env:GLM_MAX_OUTPUT)  { $env:GLM_MAX_OUTPUT }  else { "16384" }
+# ---------------------------------------------------------------------------
+# TWO settings make Codex run without prompting. Both are required; neither
+# works alone. Established by bisecting every other candidate - see AGENTS.md.
+#
+#   1. approval_policy = "never" + sandbox_mode = "danger-full-access"
+#      How much Codex asks about commands. These only work as a pair: under any
+#      sandboxed mode Codex needs to escalate out of the sandbox, escalation
+#      exists only under "on-request", so it quietly upgrades "never" and asks.
+#
+#   2. [projects.<dir>] trust_level = "trusted"
+#      Whether Codex may work in the directory at all. Checked BEFORE and
+#      INDEPENDENTLY of the approval settings - an untrusted directory prompts
+#      before every command no matter what approval_policy says.
+#
+# Codex writes the trust entry itself once you approve a folder, but this
+# launcher regenerates config.toml on every run, so any entry it does not
+# re-emit is destroyed. That is why prompting used to come back at random.
+# Merge-ExistingTrust below preserves what Codex has already trusted.
+# ---------------------------------------------------------------------------
+
 # Approval + sandbox. Default is no prompts. Override in .env (CODEX_APPROVAL /
 # CODEX_SANDBOX) or soften per-run with --auto-mode.
 $approval = if ($env:CODEX_APPROVAL) { $env:CODEX_APPROVAL } else { "never" }
@@ -69,42 +137,40 @@ if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
   throw "codex not installed. Install with:  npm install -g @openai/codex"
 }
 
-# Codex reads MANAGED DEFAULTS from a fixed path (~/.codex/managed_config.toml),
-# and they override per-session config and CLI flags. So prompting is controlled
-# here, not in the scoped config below. NOTE: this file is GLOBAL - it affects
-# every Codex session on this machine, not only this launcher.
-$globalHome = Join-Path $env:USERPROFILE ".codex"
-New-Item -ItemType Directory -Force -Path $globalHome | Out-Null
-$mc = Join-Path $globalHome "managed_config.toml"
-if ((Test-Path $mc) -and -not (Test-Path "$mc.bak")) { Copy-Item $mc "$mc.bak" }
-"approval_policy = `"$approval`"`nsandbox_mode    = `"$sandbox`"" | Set-Content $mc -Encoding ascii
-Write-Host "codex prompting: approval=$approval sandbox=$sandbox  (global, in $mc)" -ForegroundColor DarkGray
-
-# The machine fence (requirements.toml) must permit the chosen values or Codex
-# ignores them. Detect and warn - editing it needs admin, so we don't touch it.
-$req = "$env:ProgramData\OpenAI\Codex\requirements.toml"
-if (Test-Path $req) {
-  $line = Get-Content $req | Where-Object { $_ -match "allowed_approval_policies" }
-  if ($line -and $line -notmatch [regex]::Escape("`"$approval`"")) {
-    Write-Host "WARN: $req does not allow approval_policy=`"$approval`"." -ForegroundColor Yellow
-    Write-Host "      Codex will fall back and keep prompting. As admin, add it to" -ForegroundColor Yellow
-    Write-Host "      allowed_approval_policies in that file (needs elevation)." -ForegroundColor Yellow
-  }
-}
-
-$env:CODEX_HOME = "$root\.codex-home"
+$env:CODEX_HOME = Join-Path $root ".codex-home"
 New-Item -ItemType Directory -Force -Path $env:CODEX_HOME | Out-Null
+$configPath = Join-Path $env:CODEX_HOME "config.toml"
+
+# Collect [projects.'<path>'] trust_level entries already in config.toml so that
+# regenerating the file does not throw away trust Codex persisted itself.
+function Get-ExistingTrust([string]$path) {
+  $trust = @{}
+  if (-not (Test-Path $path)) { return $trust }
+  $current = $null
+  foreach ($line in Get-Content -LiteralPath $path) {
+    if ($line -match "^\s*\[projects\.'(.+)'\]\s*$") { $current = $Matches[1]; continue }
+    if ($line -match '^\s*\[')                       { $current = $null; continue }
+    if ($current -and $line -match '^\s*trust_level\s*=\s*"([^"]+)"') {
+      $trust[$current] = $Matches[1]
+    }
+  }
+  return $trust
+}
+$trust = Get-ExistingTrust $configPath
+foreach ($d in @((Get-Location).Path, $root)) { $trust[$d.ToLower()] = "trusted" }
+
 $config = @"
 # Generated by scripts/codex-glm.ps1 - do not edit by hand.
 model = "$model"
 model_provider = "glm"
+
+# Required pair - see the comment block in this script before changing either.
 approval_policy = "$approval"
 sandbox_mode = "$sandbox"
 
 # Top-level, before the provider table. Note: Codex caps custom providers
 # near 258K regardless (upstream openai/codex#19185).
 model_context_window = $ctx
-model_max_output_tokens = $out
 
 [model_providers.glm]
 name = "GLM (self-hosted)"
@@ -112,6 +178,17 @@ env_key = "GLM_API_KEY"
 base_url = "$env:GLM_BASE_URL"
 wire_api = "responses"
 "@
+
+# Required: an untrusted directory prompts before every command regardless of
+# approval_policy. Existing entries are carried over, not overwritten.
+foreach ($d in ($trust.Keys | Sort-Object)) {
+  $config += @"
+
+[projects.'$d']
+trust_level = "$($trust[$d])"
+"@
+}
+
 if ($auto -and -not $yolo) {
   $config += @"
 
@@ -120,13 +197,37 @@ if ($auto -and -not $yolo) {
 network_access = true
 "@
 }
-Set-Content -Path "$env:CODEX_HOME\config.toml" -Value $config -Encoding ascii
 
-if ($auto -and -not $yolo) { Write-Host "auto-mode: on (workspace + network run without prompting; policy still gates out-of-workspace)" -ForegroundColor DarkGray }
-if ($yolo) { Write-Host "YOLO: no approvals, no sandbox. Do not run untrusted code under this." -ForegroundColor Yellow }
+# On Windows a real sandbox needs a mode, and Codex normally writes this key
+# itself. We regenerate config.toml every launch, so it must be re-emitted or
+# workspace-write silently degrades to read-only.
+if ($sandbox -ne "danger-full-access") {
+  $config += @"
+
+[windows]
+sandbox = "unelevated"
+"@
+}
+Set-Content -Path $configPath -Value $config -Encoding ascii
+
+# The machine fence (requirements.toml) must permit these values or Codex clamps
+# them and prompts anyway. Detect and warn - editing it needs admin.
+$req = Join-Path $env:ProgramData "OpenAI\Codex\requirements.toml"
+if (Test-Path $req) {
+  $reqText = Get-Content $req
+  foreach ($pair in @(@("allowed_approval_policies", $approval), @("allowed_sandbox_modes", $sandbox))) {
+    $line = $reqText | Where-Object { $_ -match $pair[0] } | Select-Object -First 1
+    if ($line -and $line -notmatch [regex]::Escape("`"$($pair[1])`"")) {
+      Write-Host "WARN: $req does not list `"$($pair[1])`" in $($pair[0])." -ForegroundColor Yellow
+      Write-Host "      Codex will clamp and keep prompting. Add it as admin (needs elevation)." -ForegroundColor Yellow
+    }
+  }
+}
+
+Write-Host "codex prompting: approval=$approval sandbox=$sandbox" -ForegroundColor DarkGray
+Write-Host "trusted dirs: $(($trust.Keys | Sort-Object) -join '; ')" -ForegroundColor DarkGray
+if ($auto) { Write-Host "auto-mode: on (prompts are expected outside the workspace)" -ForegroundColor DarkGray }
+else { Write-Host "no-prompt mode: no approvals, no sandbox. Do not run untrusted code under this." -ForegroundColor Yellow }
 Write-Host "Codex -> GLM at $env:GLM_BASE_URL (model $model)" -ForegroundColor Green
-if ($yolo) {
-  # Also pass Codex's own bypass flag. An enterprise-managed policy can still
-  # override this and re-assert prompts - that is enforced above the CLI.
-  codex --dangerously-bypass-approvals-and-sandbox @fwd
-} elseif ($fwd) { codex @fwd } else { codex }
+
+codex -m $model @fwd

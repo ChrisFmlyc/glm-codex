@@ -25,18 +25,18 @@ serving an OpenAI-compatible API will connect.
 
 - **Node.js**, for the `codex` CLI
 
-Copy the config template and fill in **two values** — your endpoint URL and key:
-
-```bash
-cp .env.example .env      # Windows: Copy-Item .env.example .env
-```
+Only **two values** are required — your endpoint URL and key:
 
 ```ini
 GLM_BASE_URL=https://YOUR-POD-ID-8000.proxy.runpod.net/v1
 GLM_API_KEY=REPLACE_WITH_YOUR_ENDPOINT_KEY
 ```
 
-Leave everything else as-is.
+You do not have to create `.env` by hand. **If either value is missing, the launcher
+prompts for it and writes it to `.env`, then continues** — so the first run just works.
+Everything else has a default (`GLM_MODEL_NAME` → `glm53-uncensored`, `GLM_MAX_CONTEXT` →
+`1048576`, `GLM_MAX_OUTPUT` → `16384`). To pre-fill instead, copy the template:
+`cp .env.example .env` (Windows: `Copy-Item .env.example .env`).
 
 **Where the launcher looks for `.env`:** it resolves in this order —
 
@@ -100,43 +100,82 @@ Two warnings can print at startup. Both are harmless:
   custom provider's context near **258K** regardless of the value. Fine for most work; don't
   rely on the full window here.
 - **`approval_policy ... disallowed by requirements`** — only on machines with a managed
-  Codex policy (`ProgramData/OpenAI/Codex/requirements.toml`). Codex falls back to prompting
-  for approval, which is the safe default.
+  Codex policy (`ProgramData/OpenAI/Codex/requirements.toml`). Codex clamps to a value the
+  policy permits and starts prompting again. See *Controlling prompts* below.
 
 ---
 
 ## Controlling prompts
 
-**By default the launcher runs with no approval prompts** — it just does the work. If you
-want confirmations back, you have three levels:
+**By default the launcher runs with no approval prompts at all.** That is deliberate for a
+testing tool. Use `--auto-mode` if you want confirmations back.
 
 | Launch | approval / sandbox | Prompts |
 |---|---|---|
-| `codex-glm` (default) | `never` / `danger-full-access` | none |
-| `codex-glm --auto-mode` | `on-request` / `workspace-write` | only outside the workspace |
-| `CODEX_APPROVAL=untrusted` in `.env` | `untrusted` / `read-only` | before most commands |
+| `codex-glm` (default) | `never` / `danger-full-access` | **none** |
+| `codex-glm --auto-mode` | `on-request` / `workspace-write` | before most commands |
 
-> **No prompts means no safety net.** With `never` + `danger-full-access`, a malicious
-> instruction in any repo, web page, or tool output Codex reads can run commands on your
-> machine with zero confirmation. Only point it at code you trust.
+### Two settings are required, and neither works alone
 
-**How it actually works (the mechanism that matters):**
+Both are written into `.codex-home/config.toml` beside the launcher. That directory is the
+scoped `CODEX_HOME` — **not** `~/.codex`, and **not** the folder you launch from.
 
-Codex reads *managed defaults* from a fixed path — `~/.codex/managed_config.toml` — and those
-**override per-session config and CLI flags**. Setting approval only in the launcher's own
-config, or via a `--yolo`-style flag, does **not** work: the managed default clamps it back.
-So the launcher writes `approval_policy` / `sandbox_mode` into that managed file on every run.
+**1. Approval and sandbox, as a pair.**
 
-Two consequences:
+```toml
+approval_policy = "never"
+sandbox_mode    = "danger-full-access"
+```
 
-1. **It is global.** `managed_config.toml` is not per-project or per-provider — it changes
-   prompting for *every* Codex session on the machine, not just this launcher. The launcher
-   backs up any existing file to `managed_config.toml.bak` the first time.
-2. **A machine fence can still block it.** If `%ProgramData%\OpenAI\Codex\requirements.toml`
-   (Windows) or `/etc/codex/requirements.toml` (Unix) exists and its `allowed_approval_policies`
-   doesn't include your value, Codex ignores the default and keeps prompting. The launcher
-   detects this and prints a warning telling you to add the value there (needs admin). It does
-   **not** edit that file for you — it's a machine-level security control.
+`approval_policy` on its own is not enough. Codex derives a *permission profile* from the
+sandbox: `danger-full-access` gives a `disabled` profile and `never` is honoured, while
+`workspace-write` or `read-only` give a `managed` profile, and the interactive TUI then
+promotes `never` to `on-request` — because escaping a managed sandbox requires approval to
+be possible. `never` alongside `workspace-write` looks right and silently does nothing.
+
+**2. Directory trust.**
+
+```toml
+[projects.'c:\path\to\your\project']
+trust_level = "trusted"
+```
+
+This is the *"allow Codex to work in this folder?"* gate. It is checked **before and
+independently of** the approval settings — an untrusted directory prompts before every
+command regardless of `approval_policy`. The launcher trusts the directory you run it from
+and its own repo root, and **merges** any entries Codex has already written rather than
+overwriting them.
+
+That merge matters: Codex persists trust once you approve a folder, but the launcher
+rebuilds `config.toml` on every run, so an entry it does not re-emit is destroyed — which
+made prompting reappear seemingly at random.
+
+### Checking what a session actually used
+
+The startup banner reflects config, not the resolved state — it can show **YOLO mode**
+while the session really runs `on-request`. Read the rollout log instead:
+
+```bash
+grep -o '"approval_policy":"[a-z-]*"' .codex-home/sessions/**/rollout-*.jsonl | tail -1
+```
+
+Healthy is `never`, with `sandbox_policy` `danger-full-access` and `permission_profile`
+`disabled`. Inside the TUI, `/debug-config` shows the config layer stack.
+
+**`codex exec` is not a valid test.** It has no way to prompt, so it reports `never` under
+any sandbox and looks fine even when the interactive TUI asks on every command.
+
+### If it still prompts
+
+A machine policy can override everything: if
+`%ProgramData%\OpenAI\Codex\requirements.toml` (Windows) or `/etc/codex/requirements.toml`
+(Unix) omits your value from `allowed_approval_policies` or `allowed_sandbox_modes`, Codex
+clamps to something it permits. The launcher checks both lists and warns; editing that file
+needs admin.
+
+> **No prompts means no safety net.** A malicious instruction in any repo, web page, or
+> tool output Codex reads can run commands with zero confirmation. Only point it at code
+> you trust; use `--auto-mode` for anything you don't.
 
 ---
 
@@ -177,6 +216,8 @@ Check `max_model_len` in the response — this is the only enforced limit — an
 | `The model '<name>' does not exist` | `GLM_MODEL_NAME` does not match the server's `--served-model-name`. Check `/v1/models` |
 | `404 ... /v1/responses` | `GLM_BASE_URL` points at a dead or wrong endpoint. Update `.env` and relaunch |
 | Wrong model shown in the TUI | A stale per-project model remembered by Codex. Relaunch, or `/model` to switch. The launcher passes the model explicitly to avoid this |
+| **Codex asks before every command** | The sandbox is not `danger-full-access`, so Codex builds a managed permission profile and promotes `never` to `on-request`. Relaunch without `--auto-mode`, and check no `CODEX_SANDBOX` / `CODEX_APPROVAL` in `.env` overrides it |
+| `--auto-mode` silently runs read-only | On Windows a sandbox needs `[windows] sandbox = "unelevated"`. Codex writes that key itself, but the launcher regenerates `config.toml` each run, so it re-emits it. Check it is present in `.codex-home/config.toml` |
 | Runs out of context sooner than expected | The 258K custom-provider cap (upstream bug above), not your `.env` value |
 | `approval_policy disallowed by requirements` | A machine policy fences it. Add your value to `allowed_approval_policies` in `requirements.toml` as admin |
 | Tool calls ignored or malformed | Server-side. Start vLLM with `--enable-auto-tool-choice --tool-call-parser glm47` |

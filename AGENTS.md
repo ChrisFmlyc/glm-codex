@@ -112,8 +112,8 @@ for line in open(sys.argv[1],encoding='utf-8'):
 
 Healthy: `never` / `danger-full-access` / `disabled`.
 
-Or run `/debug-config` inside the TUI — it prints the config layer stack and the effective
-requirements. It is a slash command, not a CLI subcommand.
+Run `/status` in the interactive TUI to check effective permissions and context.
+`/debug-config` is not available in the tested Codex CLI 0.162.1.
 
 **`codex exec` is not a valid test.** Exec has no way to prompt, so it reports `never`
 under any sandbox and passes even when the TUI is broken. Always verify interactively.
@@ -122,18 +122,26 @@ under any sandbox and passes even when the TUI is broken. Always verify interact
 
 ## Other things that bite
 
-- **The served name is `glm53-uncensored`.** Requesting `glm53` returns
-  `The model 'glm53' does not exist` (404). The launcher passes `-m` explicitly.
+- **The served model name changes between pods** (`glm53-uncensored`, `glm-5.3-flash`,
+  `glm-5.3-flash-fp8` have all appeared). A wrong name returns
+  `The model '<name>' does not exist` (404). The launcher reads `/v1/models` at launch,
+  adopts the served name and `max_model_len` when exactly one model is served, and passes
+  `-m` explicitly.
 - **A running Codex session holds its old config.** Relaunch after changing `.env` or the
   endpoint, or it keeps hitting the previous pod.
-- **Context is capped near 258K** for a custom provider regardless of
-  `model_context_window` (upstream `openai/codex#19185`).
+- **Context depends on the server and Codex version.** The tested Codex CLI 0.162.1
+  displayed 1.05M context with `model_context_window = 1048576`. Older versions had
+  custom-provider limits (upstream `openai/codex#19185`); do not assume a current 258K cap.
+  The UI check does not prove performance on a full million-token input.
 - **`model_max_output_tokens` is not a valid key** in current Codex — it fails under
   `--strict-config`. Do not re-add it.
 - **`.ps1` must be pure ASCII.** PowerShell reads a BOM-less script as cp1252; one
   em-dash gives `The string is missing the terminator` pointing at a line that is fine —
   the reported line is where the parser gave up, not where the bad byte is.
-- **Only `.env` changes between deploys.** `GLM_BASE_URL` embeds the pod ID.
+- **Only `.env` changes between deploys.** `GLM_BASE_URL` embeds the pod ID. Both
+  launchers check URL + key against `GET /v1/models` before writing `config.toml` and ask
+  for both until the pod answers 200. Placeholders from `.env.example` count as unset. Keep
+  that check in both launchers.
 
 ---
 
@@ -148,3 +156,15 @@ scripts/codex-glm.sh      Linux/macOS/Git-Bash launcher
 ```
 
 Both launchers must stay behaviourally identical. If you change one, change the other.
+
+## Team handoff checks
+
+Keep README team setup self-contained: a clone, endpoint `.env`, and Codex CLI must be
+enough; no dependency on a sibling deployment repo, personal SSH keys, or OpenAI login.
+Normalize saved URLs as well as prompted URLs. Treat `.env` as data in both launchers;
+accept CRLF and matching outer quotes without executing shell commands. Keep Unix trust
+paths case-sensitive and use native Windows paths on Windows.
+
+Run `python3 -m unittest discover -s tests -v` for endpoint/config regression checks.
+The suite uses mock credentials and never contacts RunPod. A live endpoint smoke test
+proves connectivity separately from interactive permission verification.

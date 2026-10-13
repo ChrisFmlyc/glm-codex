@@ -1,250 +1,197 @@
 # GLM-5.3-Flash in Codex
 
-Drive the **Codex CLI** with your own self-hosted **GLM-5.3-Flash** endpoint — no proxy,
-no translation layer. Codex speaks the OpenAI **Responses API** (`/v1/responses`), which
-vLLM implements natively, so it connects straight to your server.
+Use Codex CLI with a private, self-hosted GLM-5.3-Flash endpoint. The launcher connects
+straight to the endpoint's OpenAI-compatible Responses API; it needs no local server.
 
-Works on **Linux, macOS and Windows**. Nothing here is specific to one server — anything
-serving an OpenAI-compatible API will connect.
+## Team setup
 
-> **A note on the model.** Codex is only as good as the model behind it. GLM-5.3-Flash
-> handles chat well but can be unreliable at long agentic tool-use — expect the occasional
-> stuck loop or malformed tool call. That is the model and its tool-call parser, not the
-> launcher.
+Your teammate needs **this repository, the endpoint `.env`, and Codex CLI**. They do not
+need the RunPod deployment repository, RunPod credentials, SSH keys, downloaded weights,
+or a ChatGPT/OpenAI login. The endpoint owner keeps the pod running and gives them access
+to this GitHub repository and the endpoint settings separately.
 
----
+1. Clone the repository:
 
-## Requirements
+   ```bash
+   git clone https://github.com/ChrisFmlyc/glm-codex.git
+   cd glm-codex
+   ```
 
-- A **running GLM endpoint** with an OpenAI-compatible API — RunPod, a local vLLM, anything
-- The endpoint started with tool calling enabled, or agentic use will not work:
+2. Install [Node.js LTS](https://nodejs.org/en/download) and
+   [Codex CLI](https://developers.openai.com/codex/cli/), then check the install:
 
-  ```
-  --enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm45
-  ```
+   ```bash
+   npm install -g @openai/codex
+   codex --version
+   ```
 
-- **Node.js**, for the `codex` CLI
+   Bash also needs `curl` and Node.js to check and parse the endpoint response. Use Bash
+   on Linux/macOS or Git Bash on Windows. The Windows launcher uses PowerShell 5.1 or newer.
+   This setup was tested with Codex CLI **0.162.1**.
 
-Only **two values** are required — your endpoint URL and key:
+3. Save the `.env` supplied by the endpoint owner in the cloned `glm-codex` directory.
+   If you received the URL and key instead, copy `.env.example` to `.env` and fill in:
 
-```ini
-GLM_BASE_URL=https://YOUR-POD-ID-8000.proxy.runpod.net/v1
-GLM_API_KEY=REPLACE_WITH_YOUR_ENDPOINT_KEY
-```
+   ```ini
+   GLM_BASE_URL=https://YOUR-POD-ID-8000.proxy.runpod.net/v1
+   GLM_API_KEY=REPLACE_WITH_YOUR_ENDPOINT_KEY
+   ```
 
-You do not have to create `.env` by hand. **If either value is missing, the launcher
-prompts for it and writes it to `.env`, then continues** — so the first run just works.
-Everything else has a default (`GLM_MODEL_NAME` → `glm53-uncensored`, `GLM_MAX_CONTEXT` →
-`1048576`, `GLM_MAX_OUTPUT` → `16384`). To pre-fill instead, copy the template:
-`cp .env.example .env` (Windows: `Copy-Item .env.example .env`).
+   These are the only required values. You can paste the full `/v1/models` URL, the `/v1`
+   base URL, or the server URL; the launcher normalizes it. It reads the served model name
+   and context window from `/v1/models` and saves them in `.env`. For our endpoint, the
+   context window is **1,048,576 tokens**. If multiple models are served, set
+   `GLM_MODEL_NAME` to the one you want.
 
-**Where the launcher looks for `.env`:** it resolves in this order —
+4. Launch from the repository:
 
-1. an explicit `-e <path>` (or `--env <path>`) flag, if you pass one;
-2. otherwise the nearest `.env` searching from your current directory **upward**;
-3. otherwise the repo's own `.env` (the one beside these scripts).
+   **Linux/macOS/Git Bash**
 
-Step 3 means you can run the launcher from an unrelated working directory — your actual
-project — and it still finds the endpoint config that lives with the repo, no flag needed.
-You can also keep a single shared `.env` in a parent directory, or point at any file
-explicitly:
+   ```bash
+   bash scripts/codex-glm.sh -e .env
+   ```
+
+   **Windows PowerShell**
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-glm.ps1 -e .\.env
+   ```
+
+   If the saved URL or key is missing or rejected, the launcher asks for replacements and
+   saves them. A failed check in a noninteractive session stops with an error. An endpoint
+   that is still starting must become ready before Codex can connect.
+
+You can now type your task into Codex. Keep using the launcher so it selects the GLM
+provider and the private scoped configuration. A plain `codex` command uses your usual
+Codex configuration.
+
+## Work on another project
+
+Run the launcher from the project you want Codex to edit. Specify the shared `.env`
+explicitly so the project's own `.env` cannot select a different endpoint.
+
+**Linux/macOS/Git Bash**
 
 ```bash
-./scripts/codex-glm.sh -e ~/secrets/glm.env
+cd /path/to/your-project
+bash /path/to/glm-codex/scripts/codex-glm.sh -e /path/to/glm-codex/.env
 ```
+
+**Windows PowerShell**
+
 ```powershell
-.\scripts\codex-glm.ps1 -e C:\secrets\glm.env
+cd C:\path\to\your-project
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\path\to\glm-codex\scripts\codex-glm.ps1 -e C:\path\to\glm-codex\.env
 ```
 
----
+Replace these paths with your own clone and project paths. The launcher trusts the current
+project and its own repository, and preserves directories trusted in earlier launches.
+It generates `.codex-home/config.toml` inside `glm-codex` without changing global
+`~/.codex` settings. No generated configuration or session files need to be shared.
 
-## Run
+Without `-e`, it uses the nearest `.env` from the current directory upward, then the
+launcher repository's `.env`. Both launchers accept unquoted or matching single/double
+quoted values and LF or CRLF line endings. Use one `KEY=value` per line; omit inline
+comments and shell substitutions. Only `GLM_*`, `CODEX_APPROVAL`, and `CODEX_SANDBOX`
+settings are loaded.
 
-### 1. Install Codex
+## Verify the connection
+
+This command verifies a model response through the launcher:
 
 ```bash
-npm install -g @openai/codex
+bash scripts/codex-glm.sh -e .env --strict-config exec --skip-git-repo-check "Reply with: it works"
 ```
 
-### 2. Launch
+Windows equivalent:
 
-**Linux / macOS**
-```bash
-./scripts/codex-glm.sh
-```
-
-**Windows**
 ```powershell
-.\scripts\codex-glm.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-glm.ps1 -e .\.env --strict-config exec --skip-git-repo-check "Reply with: it works"
 ```
 
-No proxy, no second terminal. The launcher reads `.env`, writes a Codex config into a
-**scoped `CODEX_HOME`** inside the repo (so your global `~/.codex` is never touched), and
-starts Codex pointed at your endpoint.
+To check interactive permissions and context, launch normally and run `/status`. Codex
+0.162.1 showed **Full Access** and **1.05M** context with this endpoint. That verifies the
+advertised configuration; it is not a benchmark of processing a full million-token input.
+Older Codex versions have had custom-provider context limits, so update Codex if `/status`
+shows a smaller window. Headless `codex exec` verifies connectivity and tool execution;
+it cannot establish whether the interactive UI will prompt.
 
-The generated config uses `wire_api = "responses"` because vLLM implements the OpenAI
-Responses API natively. See `codex/config.example.toml` for what it produces.
+## Permissions
 
-If your server's `--served-model-name` is not `glm53-uncensored`, set `GLM_MODEL_NAME` in
-`.env`.
-
----
-
-## What to expect
-
-Two warnings can print at startup. Both are harmless:
-
-- **`Model metadata for <model> not found`** — Codex has no built-in card for a self-hosted
-  model. The launcher sets `model_context_window` from `.env`, but the warning stays and,
-  because of an [upstream bug](https://github.com/openai/codex/issues/19185), Codex caps a
-  custom provider's context near **258K** regardless of the value. Fine for most work; don't
-  rely on the full window here.
-- **`approval_policy ... disallowed by requirements`** — only on machines with a managed
-  Codex policy (`ProgramData/OpenAI/Codex/requirements.toml`). Codex clamps to a value the
-  policy permits and starts prompting again. See *Controlling prompts* below.
-
----
-
-## Controlling prompts
-
-**By default the launcher runs with no approval prompts at all.** That is deliberate for a
-testing tool. Use `--auto-mode` if you want confirmations back.
-
-| Launch | approval / sandbox | Prompts |
-|---|---|---|
-| `codex-glm` (default) | `never` / `danger-full-access` | **none** |
-| `codex-glm --auto-mode` | `on-request` / `workspace-write` | before most commands |
-
-### Two settings are required, and neither works alone
-
-Both are written into `.codex-home/config.toml` beside the launcher. That directory is the
-scoped `CODEX_HOME` — **not** `~/.codex`, and **not** the folder you launch from.
-
-**1. Approval and sandbox, as a pair.**
+The default is **no approval prompts and full filesystem access**. Use it for trusted
+projects. Both settings are intentionally generated together:
 
 ```toml
 approval_policy = "never"
-sandbox_mode    = "danger-full-access"
+sandbox_mode = "danger-full-access"
 ```
 
-`approval_policy` on its own is not enough. Codex derives a *permission profile* from the
-sandbox: `danger-full-access` gives a `disabled` profile and `never` is honoured, while
-`workspace-write` or `read-only` give a `managed` profile, and the interactive TUI then
-promotes `never` to `on-request` — because escaping a managed sandbox requires approval to
-be possible. `never` alongside `workspace-write` looks right and silently does nothing.
+The current project also gets a `trust_level = "trusted"` entry. Preserve both the
+permission pair and existing trust entries when changing the launchers; see `AGENTS.md`.
 
-**2. Directory trust.**
-
-```toml
-[projects.'c:\path\to\your\project']
-trust_level = "trusted"
-```
-
-This is the *"allow Codex to work in this folder?"* gate. It is checked **before and
-independently of** the approval settings — an untrusted directory prompts before every
-command regardless of `approval_policy`. The launcher trusts the directory you run it from
-and its own repo root, and **merges** any entries Codex has already written rather than
-overwriting them.
-
-That merge matters: Codex persists trust once you approve a folder, but the launcher
-rebuilds `config.toml` on every run, so an entry it does not re-emit is destroyed — which
-made prompting reappear seemingly at random.
-
-### Checking what a session actually used
-
-The startup banner reflects config, not the resolved state — it can show **YOLO mode**
-while the session really runs `on-request`. Read the rollout log instead:
+To use the workspace sandbox with approvals when needed, pass `--auto-mode`:
 
 ```bash
-grep -o '"approval_policy":"[a-z-]*"' .codex-home/sessions/**/rollout-*.jsonl | tail -1
+bash scripts/codex-glm.sh -e .env --auto-mode
 ```
 
-Healthy is `never`, with `sandbox_policy` `danger-full-access` and `permission_profile`
-`disabled`. Inside the TUI, `/debug-config` shows the config layer stack.
+The PowerShell launcher accepts the same switch. A machine's managed Codex policy can
+restrict these choices. The launcher warns when `requirements.toml` omits the selected
+approval policy or sandbox mode; it does not modify machine policy.
 
-**`codex exec` is not a valid test.** It has no way to prompt, so it reports `never` under
-any sandbox and looks fine even when the interactive TUI asks on every command.
+## Endpoint requirements and troubleshooting
 
-### If it still prompts
+The endpoint must implement `/v1/models` and `/v1/responses`. Chat Completions support
+alone is insufficient. For this GLM build, the deployment owner enables tool calling with:
 
-A machine policy can override everything: if
-`%ProgramData%\OpenAI\Codex\requirements.toml` (Windows) or `/etc/codex/requirements.toml`
-(Unix) omits your value from `allowed_approval_policies` or `allowed_sandbox_modes`, Codex
-clamps to something it permits. The launcher checks both lists and warns; editing that file
-needs admin.
-
-> **No prompts means no safety net.** A malicious instruction in any repo, web page, or
-> tool output Codex reads can run commands with zero confirmation. Only point it at code
-> you trust; use `--auto-mode` for anything you don't.
-
----
-
-## Interactive vs headless
-
-Run Codex **interactively** (the launcher does this). On a machine with a managed approval
-policy, `codex exec` (headless) cannot run shell commands — it has no way to prompt, so tool
-calls are rejected. The interactive launcher prompts you to approve out-of-workspace actions
-and works normally; with `--auto-mode`, workspace and network actions do not prompt at all.
-
----
-
-## Verifying it works
-
-**Is your server up?**
-
-```bash
-curl -s "$GLM_BASE_URL/models" -H "Authorization: Bearer $GLM_API_KEY"
+```text
+--enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm45
 ```
 
-Check `max_model_len` in the response — this is the only enforced limit — and confirm the
-`id` matches your `GLM_MODEL_NAME`. Requesting a name the server does not serve returns
-`The model '<name>' does not exist`.
+The intended weights are `orcarouter/GLM-5.3-Flash-Uncensored-FP8`. A served model name is
+an alias; the `/v1/models` `root` field identifies the actual weights directory. The
+launcher does not deploy or restart pods.
 
-**End to end through the launcher:**
-
-```bash
-./scripts/codex-glm.sh exec --skip-git-repo-check "Reply with exactly: it works"
-```
-
----
-
-## Troubleshooting
-
-| Symptom | Cause and fix |
+| Symptom | What to do |
 |---|---|
-| `codex: command not found` / not recognized | Codex not installed: `npm install -g @openai/codex` |
-| `The model '<name>' does not exist` | `GLM_MODEL_NAME` does not match the server's `--served-model-name`. Check `/v1/models` |
-| `404 ... /v1/responses` | `GLM_BASE_URL` points at a dead or wrong endpoint. Update `.env` and relaunch |
-| Wrong model shown in the TUI | A stale per-project model remembered by Codex. Relaunch, or `/model` to switch. The launcher passes the model explicitly to avoid this |
-| **Codex asks before every command** | The sandbox is not `danger-full-access`, so Codex builds a managed permission profile and promotes `never` to `on-request`. Relaunch without `--auto-mode`, and check no `CODEX_SANDBOX` / `CODEX_APPROVAL` in `.env` overrides it |
-| `--auto-mode` silently runs read-only | On Windows a sandbox needs `[windows] sandbox = "unelevated"`. Codex writes that key itself, but the launcher regenerates `config.toml` each run, so it re-emits it. Check it is present in `.codex-home/config.toml` |
-| Runs out of context sooner than expected | The 258K custom-provider cap (upstream bug above), not your `.env` value |
-| `approval_policy disallowed by requirements` | A machine policy fences it. Add your value to `allowed_approval_policies` in `requirements.toml` as admin |
-| Tool calls ignored or malformed | Server-side. Start vLLM with `--enable-auto-tool-choice --tool-call-parser glm47` |
-| PowerShell: `The string is missing the terminator` | A non-ASCII character in a `.ps1`. PowerShell reads scripts without a BOM as cp1252. **The reported line is not where the bad byte is** — scan for bytes > 127 |
+| `codex`, `node`, or `curl` not installed | Install the prerequisites above and reopen your terminal. |
+| API key rejected (401/403) | Ask the endpoint owner for the current endpoint key; a RunPod management key is a different credential. |
+| Unreachable, 404, or server not ready (5xx) | Check with the endpoint owner that the pod is running and ready; update URL/key if it was redeployed. |
+| Multiple models and model not served | Set `GLM_MODEL_NAME` to one of the IDs listed by the launcher. |
+| Invalid `/v1/models` response | Check the URL points to an inference endpoint, not a website or a Chat Completions-only service. |
+| Context smaller than expected | Check the server's `max_model_len`, update Codex, and read `/status`. The launcher adopts the server limit. |
+| Prompts still appear | Check `.env` permission overrides and machine policy; relaunch after changing settings. |
+| Requests hit an old endpoint | Exit the existing Codex session and relaunch; sessions retain their startup configuration. |
+| Tool calls fail or loop | Ask the endpoint owner to check the model's tool parser and server logs. |
 
----
+`.env` and `.codex-home/` are gitignored. Give teammates only the endpoint settings they
+need, and keep the real key out of commits. `GLM_MAX_OUTPUT` remains a legacy setting;
+current Codex has no supported `model_max_output_tokens` config key, so the launcher does
+not generate it.
 
-## Security notes
+## Development checks
 
-- **`.env` is gitignored.** Never commit it.
-- **Your endpoint key ends up in several places**: `.env`, your server's start command, and
-  its logs. vLLM prints `--api-key` in plaintext at startup — treat the key as visible to
-  anyone who can read those logs.
-- **One config to update per redeploy.** If your endpoint URL changes, only `.env` changes.
+The regression suite uses a local mock endpoint and a stub Codex executable; it needs
+Python 3.11+ and Node.js, and does not need a real endpoint key:
 
----
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Set `GLM_TEST_PWSH` to a PowerShell executable to test both launchers locally. On Windows,
+run the suite with `GLM_TEST_PWSH=powershell` for Windows PowerShell 5.1 and
+`GLM_TEST_PWSH=pwsh` for PowerShell 7. Local checks covered Bash and PowerShell 7 on Linux;
+Windows PowerShell 5.1 and macOS still need native runs.
 
 ## Layout
 
-```
-.env.example              copy to .env; fill in two values
-codex/
-  config.example.toml     reference for what codex-glm generates
-scripts/
-  codex-glm.sh   / .ps1   launch Codex CLI against your endpoint
+```text
+.env.example              endpoint settings template
+codex/config.example.toml generated configuration reference
+scripts/codex-glm.sh      Bash launcher
+scripts/codex-glm.ps1     PowerShell launcher
+scripts/read-models.cjs   JSON model-list parser for Bash
+.codex-home/              private generated Codex config and sessions
 ```
 
-## Licence
-
-MIT
+MIT licensed.

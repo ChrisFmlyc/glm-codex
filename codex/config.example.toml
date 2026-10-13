@@ -1,14 +1,17 @@
-# Reference only. The launcher (scripts/codex-glm.*) GENERATES the real
-# config.toml from your .env at runtime, into a scoped CODEX_HOME so it never
-# touches your global ~/.codex. You do not need to edit this file.
-#
-# This is what it produces:
-
+# Reference only. The launchers generate .codex-home/config.toml from .env.
+# Do not edit or share generated configuration and session files.
 model = "glm53-uncensored"
 model_provider = "glm"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+model_context_window = 1048576
 
 [model_providers.glm]
 name = "GLM (self-hosted)"
-env_key = "GLM_API_KEY"          # Codex reads the bearer token from this env var
+env_key = "GLM_API_KEY"
 base_url = "https://YOUR-POD-ID-8000.proxy.runpod.net/v1"
-wire_api = "responses"           # vLLM implements the Responses API natively
+wire_api = "responses"
+
+# The launchers add and preserve trusted native project paths.
+# [projects.'/path/to/your-project']
+# trust_level = "trusted"
